@@ -1,0 +1,174 @@
+---
+title: ""
+output:
+  html_document:
+    css: custom.css
+params:
+  occ_name: "Electricians"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(gganimate)
+library(tidyverse)
+library(data.table)
+library(httr)
+library(janitor)
+library(gt)
+library(sf)
+library(scales)
+
+load("Occupation Data2.RData")
+
+occupation_filter <- params$occ_name
+
+# selected_series <- c("472031", "472061", "472111", "471011", "472152", "119021", "472141", "472073", "119199", "439061", "472051", "499021", "472081")
+state_names <- state.name
+selected_areas <- c("Nevada Statewide", "Carson City, NV", "Las Vegas-Henderson-North Las Vegas, NV", "Reno, NV", "Balance of Nevada nonmetropolitan area",
+                    "Idaho Statewide", "Boise City, ID", "Twin Falls, ID", "Utah Statewide", "Salt Lake City-Murray, UT", "Arizona Statewide", "Phoenix-Mesa-Chandler, AZ", "Flagstaff, AZ", "Oregon Statewide", "Eastern Oregon nonmetropolitan area")
+
+
+
+```
+
+## Data for `r occupation_filter`
+
+This table summarizes the wage distribution for `r occupation_filter` in Nevada, its areas, and selected neighboring areas.
+
+```{r table, echo=FALSE, warning=FALSE}
+
+oews_data %>%
+  filter(occupation_name == occupation_filter,
+         area_name %in% selected_areas) %>%
+  arrange(is_state, -employment) %>%
+  gt(groupname_col = "state_name") %>%
+  cols_hide(
+    columns = c("area_code", "state_code", "occupation_name", "is_state")
+  ) %>%
+  fmt_number(
+    columns = employment,
+    decimals = 0
+  ) %>%
+  fmt_currency(
+    columns = c(contains("_wage")),
+    decimals = 2
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "lightgrey"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_row_groups()
+  ) %>%
+  tab_spanner(
+    label = "Hourly Wages by Percentile",
+    columns = c(hourly_10th_percentile_wage,
+                hourly_25th_percentile_wage,
+                hourly_median_wage,
+                hourly_75th_percentile_wage,
+                hourly_90th_percentile_wage)
+  ) %>%
+  tab_header(
+    title = paste0("Data for ",occupation_filter," in 2024")
+  ) %>%
+  tab_source_note(
+    source_note = "Data from U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics"
+  ) %>%
+  cols_label(
+    area_name = "Area",
+    employment = "Employment",
+    hourly_10th_percentile_wage = "10th",
+    hourly_25th_percentile_wage = "25th",
+    hourly_mean_wage = "Mean Wage",
+    hourly_median_wage = "Median",
+    hourly_75th_percentile_wage = "75th",
+    hourly_90th_percentile_wage = "90th"
+  ) %>%
+  cols_move(
+    columns = hourly_mean_wage,
+    after = employment
+  )
+
+
+```
+
+## Wages for `r occupation_filter` in the Mountain West
+
+This map shows the median hourly wage for `r occupation_filter` by area in Nevada, Oregon, Idaho, Oregon and Utah. Note that this includes areas where the primary city in a metropolitan statistical area is present in one of these states, which is why parts of Arizona are excluded.
+
+```{r map, echo=FALSE, warning=FALSE, fig.height=10, fig.width = 12}
+oews_msas <- oews_data %>%
+  filter(occupation_name == occupation_filter,
+         state_code %in% c(4, 16, 32, 41, 49), 
+         !(area_name %in% state_names)) %>%
+  mutate(area_code = as.character(area_code),
+         across(contains("_wage"), .fns = as.numeric)
+         )
+
+oews_map <- oews_areas %>%
+  inner_join(oews_msas, by = c("new_area" = "area_code"))
+
+ggplot(oews_map) + 
+  geom_sf(aes(fill = hourly_median_wage)) +
+  labs(
+    title = paste0("Median Hourly Wage for ",occupation_filter),
+    subtitle = "Selected areas in Mountain region",
+    caption = "Data from U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics",
+    fill = "Median Hourly Wage"
+  ) +
+  scale_fill_viridis_c()+
+  theme_void() +
+  theme(
+    legend.position = "bottom",
+    axis.text = element_blank()
+  ) +
+  coord_sf(expand = FALSE)
+```
+
+This chart shows the median hourly wage for `r occupation_filter` by area in Nevada, Arizona, Oregon, Idaho, and Utah, including the median wage for each state as a whole.
+
+```{r bar-plot, echo=FALSE, warning=FALSE, fig.height=10, fig.width=12}
+
+oews_data %>%
+  filter(occupation_name == occupation_filter,
+         state_code %in% c(4, 16, 32, 41, 49)) %>%
+  mutate(
+    area_type = case_when(
+      str_detect(area_name, " Statewide") ~ "state",
+      str_detect(area_name, "nonmetropolitan") ~ "non_msa",
+      TRUE ~ "msa"
+    )
+  ) %>%
+  ggplot(aes(x = hourly_median_wage,
+             y = reorder(area_name, hourly_median_wage))) +
+  geom_col(aes(fill = area_type)) +
+  geom_label(aes(label = hourly_median_wage)) +
+  labs(
+    title = paste0("Median Wage for ", occupation_filter),
+    caption = "Data from U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics",
+    x = NULL, y = NULL
+  ) +
+  facet_wrap(~state_name, scales = "free_y", ncol = 2) +
+  scale_x_continuous(labels = dollar) +
+  scale_fill_manual(
+    values = c(
+      state = "#66c2a5",   # soft green
+      msa = "#8da0cb",     # soft blue-purple
+      non_msa = "#fc8d62"  # muted orange
+    )
+  ) + 
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face="bold")
+  )
+```
+
+## Data Sources and Methodology
+
+This data comes from the U.S. Bureau of Labor Statistics Occupational Employment and Wage Statistics (OEWS) program, which surveys employers nationwide to construct estimates of employment and wages by occupation. OEWS data is [available from the BLS here](https://www.bls.gov/oes/). OEWS regions consist of both statewide data as well as substate areas, which may consist of both metropolitan statistical areas and other regions within the state. Using area definitions provided by the OEWS program, county shapefiles from the U.S. Census Bureau were merged to create OEWS regional maps.
+
+OEWS data is updated by the BLS annually in April, reflecting estimates as of May in the previous year.
+
+This analysis was prepared by the Research & Analysis Bureau in the Nevada Department of Employment, Training, and Rehabilitation.
