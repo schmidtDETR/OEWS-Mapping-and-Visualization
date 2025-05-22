@@ -10,7 +10,6 @@ params:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-library(gganimate)
 library(tidyverse)
 library(data.table)
 library(httr)
@@ -26,7 +25,9 @@ occupation_filter <- params$occ_name
 # selected_series <- c("472031", "472061", "472111", "471011", "472152", "119021", "472141", "472073", "119199", "439061", "472051", "499021", "472081")
 state_names <- state.name
 selected_areas <- c("Nevada Statewide", "Carson City, NV", "Las Vegas-Henderson-North Las Vegas, NV", "Reno, NV", "Balance of Nevada nonmetropolitan area",
-                    "Idaho Statewide", "Boise City, ID", "Twin Falls, ID", "Utah Statewide", "Salt Lake City-Murray, UT", "Arizona Statewide", "Phoenix-Mesa-Chandler, AZ", "Flagstaff, AZ", "Oregon Statewide", "Eastern Oregon nonmetropolitan area")
+                    "Idaho Statewide", "Boise City, ID", "Twin Falls, ID", "Utah Statewide", "Salt Lake City-Murray, UT", "Arizona Statewide", "Phoenix-Mesa-Chandler, AZ", "Flagstaff, AZ", "Oregon Statewide", "Eastern Oregon nonmetropolitan area",
+                    "San Jose-Sunnyvale-Santa Clara, CA", "Sacramento-Roseville-Folsom, CA", "Fresno, CA", "Los Angeles-Long Beach-Anaheim, CA", "Chico, CA", "Bakersfield-Delano, CA", "California Statewide")
+
 
 
 
@@ -93,46 +94,64 @@ oews_data %>%
 
 ```
 
-## Wages for `r occupation_filter` in the Mountain West
+## Wages for `r occupation_filter` in the Western United States
 
-This map shows the median hourly wage for `r occupation_filter` by area in Nevada, Oregon, Idaho, Oregon and Utah. Note that this includes areas where the primary city in a metropolitan statistical area is present in one of these states, which is why parts of Arizona are excluded.
+This map shows the median hourly wage for `r occupation_filter` by area in Nevada, California, Oregon, Idaho, Oregon and Utah.
 
 ```{r map, echo=FALSE, warning=FALSE, fig.height=10, fig.width = 12}
-oews_msas <- oews_data %>%
-  filter(occupation_name == occupation_filter,
-         state_code %in% c(4, 16, 32, 41, 49), 
-         !(area_name %in% state_names)) %>%
-  mutate(area_code = as.character(area_code),
-         across(contains("_wage"), .fns = as.numeric)
-         )
 
-oews_map <- oews_areas %>%
-  inner_join(oews_msas, by = c("new_area" = "area_code"))
 
-ggplot(oews_map) + 
+generate_oews_maps <- function(plot_data) {
+  
+occ_name <- plot_data %>% pull(occupation_name) %>% unique()
+
+base_map <- ggplot(plot_data) + 
   geom_sf(aes(fill = hourly_median_wage)) +
   labs(
-    title = paste0("Median Hourly Wage for ",occupation_filter),
-    subtitle = "Selected areas in Mountain region",
+    title = paste0("Median Hourly Wage for ", occ_name),
+    subtitle = "Nevada and neighboring states",
     caption = "Data from U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics",
-    fill = "Median Hourly Wage"
+    fill = NULL
   ) +
-  scale_fill_viridis_c()+
+  scale_fill_viridis_c(guide = guide_colorbar(barwidth = 20, barheight = 1), labels = dollar)+
   theme_void() +
   theme(
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin = margin(0, 0, 0, 0),  # remove all margins
     legend.position = "bottom",
     axis.text = element_blank()
   ) +
   coord_sf(expand = FALSE)
+
+return(base_map)
+
+}
+
+oews_msas <- oews_data %>%
+  filter(
+    occupation_name == occupation_filter,
+    state_code %in% c(4, 6, 16, 32, 41, 49), 
+    !(area_name %in% state_names)) %>%
+  mutate(
+    across(contains("_wage"), .fns = as.numeric)
+  )
+
+oews_map <- oews_areas %>%
+  mutate(new_area = as.integer(new_area)) %>%
+  inner_join(oews_msas, by = c("new_area" = "area_code"))
+
+generate_oews_maps(oews_map)
+
+
 ```
 
-This chart shows the median hourly wage for `r occupation_filter` by area in Nevada, Arizona, Oregon, Idaho, and Utah, including the median wage for each state as a whole.
+This chart shows the median hourly wage for `r occupation_filter` by area in Nevada, California, Arizona, Oregon, Idaho, and Utah, including the median wage for each state as a whole.
 
 ```{r bar-plot, echo=FALSE, warning=FALSE, fig.height=10, fig.width=12}
 
 oews_data %>%
   filter(occupation_name == occupation_filter,
-         state_code %in% c(4, 16, 32, 41, 49)) %>%
+         state_code %in% c(4, 16, 32, 41, 49) | area_name %in% selected_areas) %>%
   mutate(
     area_type = case_when(
       str_detect(area_name, " Statewide") ~ "state",

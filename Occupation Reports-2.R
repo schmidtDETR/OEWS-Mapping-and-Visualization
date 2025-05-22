@@ -15,7 +15,7 @@ library(scales)
 library(tictoc)
 
 setwd("S:/ra/RADUMP/Chief Economist/R Projects/OEWS Occupation Reports")
-
+tic()
 # Read in BLS Data #----
 fread_bls <- function(url){
   
@@ -68,11 +68,16 @@ oews_import <- oews_current %>% select(-footnote_codes) %>%
   left_join(oews_datatype)
 
 # Set series and area filters #----
+# This shows a couple of options for filtering, by words within job title or SOC code.
 selected_series <- oews_import %>% select(occupation_code, occupation_name) %>% distinct() %>% filter(str_detect(occupation_name, "omputer")) %>% pull(occupation_code)
 # selected_series <- c("472031", "472061", "472111", "471011", "472152", "119021", "472141", "472073", "119199", "439061", "472051", "499021", "472081")
+
 state_names <- state.name
+
+# Manually populated list of areas from OEWS for inclusion in GT table and bar chart
 selected_areas <- c("Nevada Statewide", "Carson City, NV", "Las Vegas-Henderson-North Las Vegas, NV", "Reno, NV", "Balance of Nevada nonmetropolitan area",
-                    "Idaho Statewide", "Boise City, ID", "Twin Falls, ID", "Utah Statewide", "Salt Lake City-Murray, UT", "Arizona Statewide", "Phoenix-Mesa-Chandler, AZ", "Flagstaff, AZ", "Oregon Statewide", "Eastern Oregon nonmetropolitan area")
+                    "Idaho Statewide", "Boise City, ID", "Twin Falls, ID", "Utah Statewide", "Salt Lake City-Murray, UT", "Arizona Statewide", "Phoenix-Mesa-Chandler, AZ", "Flagstaff, AZ", "Oregon Statewide", "Eastern Oregon nonmetropolitan area",
+                    "San Jose-Sunnyvale-Santa Clara, CA", "Sacramento-Roseville-Folsom, CA", "Fresno, CA", "Los Angeles-Long Beach-Anaheim, CA", "Chico, CA", "Bakersfield-Delano, CA", "California Statewide")
 
 state_code_lookup <- fips_codes %>%
   select(state_code, state_name) %>%
@@ -98,6 +103,8 @@ oews_data <- oews_import %>%
     across(employment:hourly_90th_percentile_wage, .fns = as.numeric)
   ) %>%
   left_join(state_code_lookup, by = "state_code")
+toc()
+
 
 # GT Table #----
 
@@ -114,8 +121,7 @@ occ_gt <- oews_data %>%
     columns = c("area_code", "state_code", "occupation_name", "is_state")
   ) %>%
   fmt_number(
-    columns = employment,
-    decimals = 0
+    columns = employment, decimals = 0
   ) %>%
   fmt_currency(
     columns = c(contains("_wage")),
@@ -130,10 +136,8 @@ occ_gt <- oews_data %>%
   ) %>%
   tab_spanner(
     label = "Hourly Wages by Percentile",
-    columns = c(hourly_10th_percentile_wage,
-                hourly_25th_percentile_wage,
-                hourly_median_wage,
-                hourly_75th_percentile_wage,
+    columns = c(hourly_10th_percentile_wage, hourly_25th_percentile_wage,
+                hourly_median_wage,hourly_75th_percentile_wage,
                 hourly_90th_percentile_wage)
   ) %>%
   tab_header(
@@ -145,49 +149,81 @@ occ_gt <- oews_data %>%
   cols_label(
     area_name = "Area",
     employment = "Employment",
-    hourly_10th_percentile_wage = "10th",
-    hourly_25th_percentile_wage = "25th",
-    hourly_mean_wage = "Mean Wage",
-    hourly_median_wage = "Median",
-    hourly_75th_percentile_wage = "75th",
-    hourly_90th_percentile_wage = "90th"
+    hourly_10th_percentile_wage = "10th", hourly_25th_percentile_wage = "25th",
+    hourly_mean_wage = "Mean Wage", hourly_median_wage = "Median",
+    hourly_75th_percentile_wage = "75th",hourly_90th_percentile_wage = "90th"
   ) %>%
   cols_move(
     columns = hourly_mean_wage,
     after = employment
   )
-
     gtsave(data = occ_gt, filename = paste0("GT Tables/Wage Table for ",safe_occ_name," 2024.html"))
-
     return(occ_gt)
-      
 }
 
 
-generate_gt_for_occ("Statistical Assistants")
+generate_gt_for_occ("Carpenters")
 
+lv_occs <- oews_data %>% 
+  filter(area_name == "Las Vegas-Henderson-North Las Vegas, NV") %>%
+  pull(occupation_name) %>%
+  unique()
+
+tic()
+walk(lv_occs, generate_gt_for_occ)
+toc()
+
+plan(multisession, workers = 10)
+
+tic()
+future_walk(lv_occs, generate_gt_for_occ, .progress = TRUE, .options = furrr_options(seed=1138))
+toc()
 
 # Wage Bar Chart #---- 
 
-ggplot(oews_data %>%
-         filter(occupation_name == "Construction Managers",
-                state_code %in% c(4, 16, 32, 41, 49)) %>%
-         mutate(hourly_median_wage = as.numeric(hourly_median_wage)),
-       aes(x = hourly_median_wage, y = reorder(area_name, hourly_median_wage))) +
-  geom_col() +
+generate_bar_chart_for_occ <- function(occ_name="All Occupations") {
+  
+  safe_occ_name <- gsub("[^A-Za-z0-9 _-]", "", occ_name)
+  
+bar_occ <- oews_data %>%
+  filter(occupation_name == occ_name,
+         area_name %in% selected_areas) %>%
+  mutate(
+    area_type = case_when(
+      str_detect(area_name, " Statewide") ~ "state",
+      str_detect(area_name, "nonmetropolitan") ~ "non_msa",
+      TRUE ~ "msa"
+    )
+  ) %>%
+  ggplot(aes(x = hourly_median_wage,
+             y = reorder(area_name, hourly_median_wage))) +
+  geom_col(aes(fill = area_type)) +
   geom_label(aes(label = hourly_median_wage)) +
   labs(
-    title = "Median Wage for Construction Managers",
+    title = paste0("Median Wage for ", occ_name),
     caption = "Data from U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics",
     x = NULL, y = NULL
   ) +
-  facet_wrap(~state_code, scales = "free_y", ncol = ) +
+  facet_wrap(~state_name, scales = "free_y", ncol = 2) +
   scale_x_continuous(labels = dollar) +
-  theme_bw() +
+  scale_fill_manual(
+    values = c(
+      state = "#66c2a5",   # soft green
+      msa = "#8da0cb",     # soft blue-purple
+      non_msa = "#fc8d62"  # muted orange
+    )
+  ) + 
+  theme_minimal() +
   theme(
-    axis.text.x = element_text(angle = 90),
-    legend.position = "none"
+    legend.position = "none",
+    strip.text = element_text(face="bold")
   )
+
+return(bar_occ)
+
+}
+
+generate_bar_chart_for_occ("Carpenters")
 
 # Generate Map #----
 
@@ -274,6 +310,11 @@ plan(multisession, workers=10)
 future_map(lv_occ_data, generate_oews_maps, .progress = TRUE, .options = furrr_options(seed=1138))
 toc()
 
+tic()
+map(lv_occ_data, generate_oews_maps, .progress = TRUE, .options = furrr_options(seed=1138))
+toc()
+
+
 
 # Single Occ Map Example
 single_occ <- oews_map %>%
@@ -281,21 +322,29 @@ single_occ <- oews_map %>%
 
 generate_oews_maps(single_occ, show_map = TRUE)
 
+
+
+
+
 # Stage Iterative Reports #----
 
 save(oews_data, oews_areas, file = "Occupation Data2.RData")
 
 
 render_occ = function(occ_name) {
+  
+  safe_occ_name <- gsub("[^A-Za-z0-9 _-]", "", occ_name)
+  
   rmarkdown::render(
     "Occupation Report.RMD", 
     params = list(
       occ_name = occ_name
     ),
-    output_file = paste0("Individual Occupations/Report for ", occ_name, ".html")
+    output_file = paste0("Individual Occupations/Report for ", safe_occ_name, ".html")
   )
 }
 
-walk(unique(oews_data$occupation_name), render_occ)
-
+tic()
+walk(lv_occs, render_occ)
+toc()
 
