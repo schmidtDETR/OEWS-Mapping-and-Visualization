@@ -14,7 +14,7 @@ library(sf)
 library(scales)
 library(tictoc)
 
-setwd("S:/ra/RADUMP/Chief Economist/R Projects/OEWS Occupation Reports")
+setwd("***YOUR WORKING DIRECTORy HERE***")
 tic()
 # Read in BLS Data #----
 fread_bls <- function(url){
